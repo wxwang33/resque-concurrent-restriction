@@ -486,6 +486,8 @@ module Resque
       # Returns the next job that is runnable
       def next_runnable_job_random
         keys = Resque.redis.keys("concurrent.runnable.*")
+        return nil if keys.blank?
+        
         key = keys.sample()
         queue = key.split("concurrent.runnable.")[1]
         tracking_key = Resque.redis.srandmember(key)
