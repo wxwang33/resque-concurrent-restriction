@@ -313,6 +313,9 @@ module Resque
 
       def decrement_queue_count(queue, by=1)
         value = Resque.redis.hincrby(queue_count_key, queue, -by)
+        if value == 0
+          Resque.redis.hdel(queue_count_key, queue)
+        end
         return value
       end
 
@@ -485,7 +488,13 @@ module Resque
 
       # Returns the next job that is runnable
       def next_runnable_job_random
-        keys = Resque.redis.keys("concurrent.runnable.*")
+        keys = []
+        all_queues_with_tasks = Resque.redis.hgetall("concurrent.queue_counts").keys
+        all_queues_with_tasks.each do |queue|
+          queue_key = "concurrent.runnable.#{queue}"
+          keys.push(queue_key) if Resque.redis.exists(queue_key)
+        end
+
         return nil if keys.blank?
         
         key = keys.sample()
