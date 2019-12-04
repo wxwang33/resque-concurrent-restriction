@@ -165,6 +165,17 @@ module Resque
         Resque::Job.new(item['queue'], item['payload']) if item
       end
 
+      def job_compressed_id(job)
+        payload =
+          if job.is_a?(Resque::Job)
+            job.payload
+          else
+            Resque.decode(job)['payload'] || {}
+          end
+        args = (payload.dig('args') || [])[0] || {}
+        return "#{args.fetch('app_instance_id', 'undefined')}-#{args.fetch('task_id', 'undefined')}"
+      end
+
       # The restriction queues that have data for each tracking key
       # Adds/Removes the queue to the list of queues for that tracking key
       # so we can quickly tell in next_runnable_job if a runnable job exists on a
@@ -264,7 +275,7 @@ module Resque
 
       def restricted?(tracking_key)
         if ConcurrentRestriction.tracking_type == 'set'
-          remove_hanging_jobs(tracking_key)
+          # remove_hanging_jobs(tracking_key)
           value = Resque.redis.send(:scard, running_key(tracking_key))
         elsif ConcurrentRestriction.tracking_type == 'count'
           count_key = running_count_key(tracking_key)
@@ -281,7 +292,7 @@ module Resque
       # the new "restricted" value  
       def increment_running_count(tracking_key, job)
         if ConcurrentRestriction.tracking_type == 'set'
-          Resque.redis.send(:sadd, running_key(tracking_key), encode(job))
+          Resque.redis.send(:sadd, running_key(tracking_key), job_compressed_id(job))
           value = Resque.redis.send(:scard, running_key(tracking_key))
         elsif ConcurrentRestriction.tracking_type == 'count'
           count_key = running_count_key(tracking_key)
@@ -294,7 +305,7 @@ module Resque
 
       def decrement_running_count(tracking_key, job)
         if ConcurrentRestriction.tracking_type == 'set'
-          Resque.redis.send(:srem, running_key(tracking_key), encode(job))
+          Resque.redis.send(:srem, running_key(tracking_key), job_compressed_id(job))
           value = Resque.redis.send(:scard, running_key(tracking_key))
         elsif ConcurrentRestriction.tracking_type == 'count'
           count_key = running_count_key(tracking_key)
