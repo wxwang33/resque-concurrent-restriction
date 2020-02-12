@@ -204,7 +204,8 @@ module Resque
           else raise "Invalid location to ConcurrentRestriction.push_to_restriction_queue"
         end
 
-        increment_queue_count(job.queue)
+        increment_queue_count(job.queue, job_compressed_id(job))
+
         update_queues_available(tracking_key, job.queue, :add)
         mark_runnable(tracking_key, false)
       end
@@ -220,12 +221,14 @@ module Resque
           clear_runnable(tracking_key, queue)
         end
 
-        decrement_queue_count(queue)
+        job = decode(str)
+
+        decrement_queue_count(queue, job_compressed_id(job))
 
         # increment by one to indicate that we are running
-        increment_running_count(tracking_key,decode(str)) if str
+        increment_running_count(tracking_key, job) if str
 
-        decode(str)
+        job
       end
 
       # Grabs the raw data (undecoded) from the restriction queue
@@ -317,17 +320,22 @@ module Resque
         return restricted
       end
 
-      def increment_queue_count(queue, by=1)
-        value = Resque.redis.hincrby(queue_count_key, queue, by)
-        return value
+      def increment_queue_count(queue, job_id)
+        count_set_key = "#{queue_count_key}.#{queue}"
+        Resque.redis.sadd(count_set_key, job_id)
+        set_queue_count(queue, Resque.redis.scard(count_set_key))
       end
 
-      def decrement_queue_count(queue, by=1)
-        value = Resque.redis.hincrby(queue_count_key, queue, -by)
-        if value == 0
+      def decrement_queue_count(queue, job_id)
+        count_set_key = "#{queue_count_key}.#{queue}"
+        Resque.redis.srem(count_set_key, job_id)
+        queue_size = Resque.redis.scard(count_set_key)
+
+        if queue_size == 0
           Resque.redis.hdel(queue_count_key, queue)
+        else
+          set_queue_count(queue, queue_size)
         end
-        return value
       end
 
       def queue_counts
@@ -578,7 +586,10 @@ module Resque
             ident = parts[3..-1].join('.')
             tracking_key = "concurrent.tracking.#{ident}"
 
-            increment_queue_count(queue, len)
+            Resque.redis.lrange(k, 0, -1).each do |str|
+              increment_queue_count(queue, job_compressed_id(decode(str)))
+            end
+
             update_queues_available(tracking_key, queue, :add)
             mark_runnable(tracking_key, true)
             queues_enabled += 1
