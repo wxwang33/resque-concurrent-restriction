@@ -545,17 +545,18 @@ module Resque
           tracking_key = tracking_key(*job.args)
           lock_key = lock_key(tracking_key)
 
-          remaining_retry_count = 1
-          loop do
+          (1..2).each do |i|
             did_run = run_atomically(lock_key) do
 
               # decrement the count after a job has run
               decrement_running_count(tracking_key, job)
 
             end
-
+            # Terminate if ran successfully
             break if did_run
-            if remaining_retry_count <= 0
+
+            # Log and force decrement on second failure
+            if i == 2
               payload = job.payload.dig('args', 0) || {}
               Resque.logger.error(
                 'Error while releasing concurrent restriction',
@@ -566,10 +567,7 @@ module Resque
                 }
               )
               decrement_running_count(tracking_key, job)
-              break
             end
-
-            remaining_retry_count -= 1
           end
         end
       end
